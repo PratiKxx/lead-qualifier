@@ -192,3 +192,44 @@ def test_ac7_end_to_end_and_idempotent_on_retry(client):
     lines = sink.path.read_text().strip().splitlines()
     assert len(lines) == 1  # retry did not create a second record
     assert json.loads(lines[0])["record"]["Rating"] == "Hot"
+
+
+# --- Salesforce failure handling ---------------------------------------------------
+
+def test_ac8_login_failure_is_not_retried_per_lead(monkeypatch, tmp_path):
+    attempts = []
+
+    class BadLogin:
+        def __init__(self):
+            attempts.append(1)
+            raise RuntimeError("INVALID_LOGIN")
+
+    monkeypatch.setenv("SF_USERNAME", "u@example.com")
+    monkeypatch.setenv("DRY_RUN", "0")
+    monkeypatch.setattr(main, "SalesforceSink", BadLogin)
+    main.get_sink.cache_clear()
+    try:
+        first, second = main.get_sink(), main.get_sink()
+    finally:
+        main.get_sink.cache_clear()
+    assert len(attempts) == 1 and first is second
+    first.path = tmp_path / "failed.jsonl"
+    res = first.write(_item())
+    assert res["action"] == "dead_letter" and "INVALID_LOGIN" in res["error"]
+
+
+def test_ac8_write_failure_dead_letters_instead_of_500(client, tmp_path, monkeypatch):
+    c, _ = client
+
+    class Exploding:
+        def write(self, item):
+            raise RuntimeError("REQUIRED_FIELD_MISSING")
+
+    dl = main.DeadLetterSink(path=tmp_path / "failed.jsonl")
+    monkeypatch.setattr(main, "_dead_letter", dl)
+    main.app.dependency_overrides[main.get_sink] = lambda: Exploding()
+    body = json.dumps(load("hot_manufacturing.json")).encode()
+    r = c.post("/webhooks/lead", content=body, headers={"X-Signature": _sign(body)})
+    assert r.status_code == 200
+    assert r.json()["salesforce"]["action"] == "dead_letter"
+    assert "REQUIRED_FIELD_MISSING" in dl.path.read_text()

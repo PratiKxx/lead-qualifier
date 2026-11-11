@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from .classifier import ClaudeClassifier, ResilientClassifier, RulesClassifier
 from .models import ClassifiedLead, LeadPayload
-from .salesforce import DryRunSink, SalesforceSink, Sink
+from .salesforce import DeadLetterSink, DryRunSink, SalesforceSink, Sink
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -43,9 +43,30 @@ def get_classifier() -> ResilientClassifier:
 @lru_cache
 def get_sink() -> Sink:
     if os.environ.get("SF_USERNAME") and os.environ.get("DRY_RUN", "0") != "1":
-        return SalesforceSink()
+        try:
+            return SalesforceSink()
+        except Exception as exc:
+            # Cached on purpose: retrying a bad login on every lead would lock the
+            # Salesforce user out (~10 failures). Fix credentials, then restart.
+            log.error(
+                "Salesforce login failed; NOT retrying until restart. Leads go to "
+                "out/failed_writes.jsonl. Run scripts/check_salesforce.py. Error: %s", exc,
+            )
+            return DeadLetterSink(reason=f"Salesforce login failed: {exc}")
     log.info("Salesforce not configured or DRY_RUN=1: writing to out/leads.jsonl")
     return DryRunSink()
+
+
+_dead_letter = DeadLetterSink()
+
+
+def write_safely(sink: Sink, item: ClassifiedLead) -> dict:
+    """A Salesforce outage or rejected record must not lose the lead."""
+    try:
+        return sink.write(item)
+    except Exception as exc:
+        log.error("Salesforce write failed for %s, dead-lettered: %s", item.lead.event_id, exc)
+        return _dead_letter.write(item, error=str(exc))
 
 
 # In-memory idempotency guard. Webhook senders retry on timeouts, so the same
@@ -86,7 +107,7 @@ async def receive_lead(
 
     classification, source = classifier.classify_with_source(lead)
     item = ClassifiedLead(lead=lead, classification=classification, classifier=source)
-    write_result = sink.write(item)
+    write_result = write_safely(sink, item)
 
     result = {
         "event_id": lead.event_id,

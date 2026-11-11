@@ -36,6 +36,7 @@ Test names in `tests/test_pipeline.py` carry the AC id, which gives traceability
 | AC-5 | As an SDR I don't want duplicate leads | Match on Email against open (unconverted) Leads; update if found, else create; SOQL input is escaped | `test_ac5_*` |
 | AC-6 | As security I only accept genuine webhooks | HMAC-SHA256 signature required when a secret is set; malformed payloads get 422 | `test_ac6_*` |
 | AC-7 | As ops I can rely on sender retries | Re-delivery of the same `event_id` returns the first result and writes nothing new | `test_ac7_*` |
+| AC-8 | As Sales Ops I never lose a lead to a Salesforce outage | A failed login is attempted once per process, not per lead, so the user isn't locked out; failed logins or writes park the record in `out/failed_writes.jsonl` with the error instead of returning 500 | `test_ac8_*` |
 
 ## Field mapping
 | Webhook field | Salesforce Lead field | Notes |

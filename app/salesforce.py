@@ -54,21 +54,42 @@ class Sink(Protocol):
     def write(self, item: ClassifiedLead) -> dict: ...
 
 
+OUT_DIR = Path(__file__).resolve().parent.parent / "out"
+
+
 class DryRunSink:
-    def __init__(self, path: Path = Path(__file__).resolve().parent.parent / "out" / "leads.jsonl"):
+    action = "dry_run"
+
+    def __init__(self, path: Path = OUT_DIR / "leads.jsonl"):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write(self, item: ClassifiedLead) -> dict:
+    def write(self, item: ClassifiedLead, error: str | None = None) -> dict:
         record = to_salesforce_lead(item)
+        entry = {
+            "written_at": datetime.now(timezone.utc).isoformat(),
+            "event_id": item.lead.event_id,
+            "sobject": "Lead",
+            "record": record,
+        }
+        if error:
+            entry["error"] = error
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "written_at": datetime.now(timezone.utc).isoformat(),
-                "event_id": item.lead.event_id,
-                "sobject": "Lead",
-                "record": record,
-            }) + "\n")
-        return {"action": "dry_run", "id": None, "path": str(self.path)}
+            f.write(json.dumps(entry) + "\n")
+        return {"action": self.action, "id": None, "path": str(self.path), **({"error": error} if error else {})}
+
+
+class DeadLetterSink(DryRunSink):
+    """Parks records that could not reach Salesforce so they can be replayed later."""
+
+    action = "dead_letter"
+
+    def __init__(self, reason: str | None = None, path: Path = OUT_DIR / "failed_writes.jsonl"):
+        super().__init__(path)
+        self.reason = reason
+
+    def write(self, item: ClassifiedLead, error: str | None = None) -> dict:
+        return super().write(item, error or self.reason)
 
 
 class SalesforceSink:
