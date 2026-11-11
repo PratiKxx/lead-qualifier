@@ -233,3 +233,24 @@ def test_ac8_write_failure_dead_letters_instead_of_500(client, tmp_path, monkeyp
     assert r.status_code == 200
     assert r.json()["salesforce"]["action"] == "dead_letter"
     assert "REQUIRED_FIELD_MISSING" in dl.path.read_text()
+
+
+def test_my_domain_accepts_url_or_prefix():
+    from app.salesforce import my_domain
+    want = "acme-dev-ed.develop.my"
+    assert my_domain("https://acme-dev-ed.develop.my.salesforce.com/") == want
+    assert my_domain("acme-dev-ed.develop.my.salesforce.com") == want
+    assert my_domain(want) == want
+
+
+def test_oauth_preferred_over_password(monkeypatch):
+    import simple_salesforce
+    from app import salesforce
+    seen = {}
+    monkeypatch.setattr(simple_salesforce, "Salesforce", lambda **kw: seen.update(kw) or "sf")
+    monkeypatch.setenv("SF_CLIENT_ID", "cid")
+    monkeypatch.setenv("SF_CLIENT_SECRET", "sec")
+    monkeypatch.setenv("SF_DOMAIN", "https://acme-dev-ed.develop.my.salesforce.com")
+    monkeypatch.setenv("SF_USERNAME", "u@example.com")
+    salesforce.connect()
+    assert seen == {"consumer_key": "cid", "consumer_secret": "sec", "domain": "acme-dev-ed.develop.my"}

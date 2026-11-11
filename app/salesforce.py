@@ -92,18 +92,41 @@ class DeadLetterSink(DryRunSink):
         return super().write(item, error or self.reason)
 
 
+def my_domain(value: str) -> str:
+    """Accept 'https://acme-dev-ed.develop.my.salesforce.com/' or the bare prefix."""
+    value = value.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
+    return value.removesuffix(".salesforce.com")
+
+
+def salesforce_configured() -> bool:
+    return bool(os.environ.get("SF_CLIENT_ID") or os.environ.get("SF_USERNAME"))
+
+
+def connect():
+    """Prefer OAuth client credentials; fall back to legacy username/password/token.
+
+    Orgs created in Winter '26 or later disable SOAP login() by default, and
+    Salesforce retires it in Summer '27, so OAuth is the supported path.
+    """
+    from simple_salesforce import Salesforce
+
+    if os.environ.get("SF_CLIENT_ID"):
+        return Salesforce(
+            consumer_key=os.environ["SF_CLIENT_ID"],
+            consumer_secret=os.environ["SF_CLIENT_SECRET"],
+            domain=my_domain(os.environ["SF_DOMAIN"]),
+        )
+    return Salesforce(
+        username=os.environ["SF_USERNAME"],
+        password=os.environ["SF_PASSWORD"],
+        security_token=os.environ.get("SF_SECURITY_TOKEN", ""),
+        domain=os.environ.get("SF_DOMAIN", "login"),
+    )
+
+
 class SalesforceSink:
     def __init__(self, sf=None):
-        if sf is None:
-            from simple_salesforce import Salesforce
-
-            sf = Salesforce(
-                username=os.environ["SF_USERNAME"],
-                password=os.environ["SF_PASSWORD"],
-                security_token=os.environ.get("SF_SECURITY_TOKEN", ""),
-                domain=os.environ.get("SF_DOMAIN", "login"),
-            )
-        self.sf = sf
+        self.sf = sf if sf is not None else connect()
 
     def find_open_lead(self, email: str) -> str | None:
         from simple_salesforce import format_soql

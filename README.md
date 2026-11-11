@@ -63,14 +63,27 @@ python scripts/send_sample.py # posts every file in samples/ with a valid signat
 |---|---|
 | nothing | Rules classifier, records written to `out/leads.jsonl` |
 | `ANTHROPIC_API_KEY` | Claude classifies, rules are the fallback |
-| `SF_USERNAME` / `SF_PASSWORD` / `SF_SECURITY_TOKEN` | Real Salesforce writes |
+| `SF_CLIENT_ID` / `SF_CLIENT_SECRET` / `SF_DOMAIN` | Real Salesforce writes (OAuth) |
 
-### Salesforce Developer org setup (5 minutes)
+### Salesforce setup (OAuth client credentials, about 10 minutes)
+Orgs created in Winter '26 or later disable username/password (SOAP) login by default,
+and Salesforce retires it in Summer '27. This service uses OAuth 2.0 client credentials
+instead, so no password goes in `.env`.
+
 1. Sign up free at developer.salesforce.com/signup.
-2. Avatar → Settings → **Reset My Security Token**; the token is emailed.
-3. Put username, password, and token in `.env`. No custom fields are needed.
-4. Run the samples, then open the **Leads** tab. Each lead shows Industry, Rating,
-   and the AI qualification block in Description.
+2. Setup → Quick Find **External Client App Manager** → **New External Client App**.
+   Name it `Lead Qualifier`, Distribution State **Local**.
+3. Under API (Enable OAuth Settings): tick **Enable OAuth**, callback URL
+   `https://login.salesforce.com/services/oauth2/success` (required but unused), scope
+   **Manage user data via APIs (api)**, tick **Enable Client Credentials Flow**. Create.
+4. On the app's **Policies** tab → Edit → OAuth Policies: tick **Enable Client Credentials
+   Flow** and set **Run As** to your own user. Save.
+5. **Settings** tab → OAuth Settings → **Consumer Key and Secret** (you verify by email).
+   Put them in `.env` as `SF_CLIENT_ID` / `SF_CLIENT_SECRET`.
+6. Setup → **My Domain**: copy the current My Domain URL into `SF_DOMAIN`.
+7. `python scripts/check_salesforce.py` (allow up to 10 minutes after creating the app).
+8. Run the samples, then Leads tab → list view **All Open Leads**. Each lead shows
+   Industry, Rating, and the AI qualification block in Description.
 
 ## Sample results (rules mode)
 

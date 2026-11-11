@@ -4,7 +4,7 @@ Run:  uvicorn app.main:app --reload
 Mode is chosen from the environment (see .env.example):
 - ANTHROPIC_API_KEY set     -> Claude classifies, rules are the fallback
 - not set                   -> rules only
-- SF_USERNAME set           -> real Salesforce writes
+- SF_CLIENT_ID (OAuth) or SF_USERNAME set -> real Salesforce writes
 - not set / DRY_RUN=1       -> records go to out/leads.jsonl
 """
 
@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from .classifier import ClaudeClassifier, ResilientClassifier, RulesClassifier
 from .models import ClassifiedLead, LeadPayload
-from .salesforce import DeadLetterSink, DryRunSink, SalesforceSink, Sink
+from .salesforce import DeadLetterSink, DryRunSink, SalesforceSink, Sink, salesforce_configured
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,7 +42,7 @@ def get_classifier() -> ResilientClassifier:
 
 @lru_cache
 def get_sink() -> Sink:
-    if os.environ.get("SF_USERNAME") and os.environ.get("DRY_RUN", "0") != "1":
+    if salesforce_configured() and os.environ.get("DRY_RUN", "0") != "1":
         try:
             return SalesforceSink()
         except Exception as exc:

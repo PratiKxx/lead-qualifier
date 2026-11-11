@@ -1,44 +1,50 @@
-"""Try the Salesforce login from .env exactly once and explain the result.
+"""Try the Salesforce connection from .env exactly once and explain the result.
 
 Usage: python scripts/check_salesforce.py
-Each failed attempt counts toward Salesforce's lockout limit (about 10), so this
-never retries.
+Never retries: failed password logins count toward Salesforce's lockout limit.
 """
 import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-from simple_salesforce import Salesforce
-from simple_salesforce.exceptions import SalesforceAuthenticationFailed
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+from dotenv import load_dotenv  # noqa: E402
+from simple_salesforce.exceptions import SalesforceAuthenticationFailed  # noqa: E402
 
-missing = [k for k in ("SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN") if not os.environ.get(k)]
-if missing:
-    sys.exit(f"Missing in .env: {', '.join(missing)}")
+from app.salesforce import connect, my_domain  # noqa: E402
 
-domain = os.environ.get("SF_DOMAIN", "login")
-print(f"Logging in as {os.environ['SF_USERNAME']} via {domain}.salesforce.com ...")
+load_dotenv(ROOT / ".env")
+
+oauth = bool(os.environ.get("SF_CLIENT_ID"))
+if oauth:
+    missing = [k for k in ("SF_CLIENT_SECRET", "SF_DOMAIN") if not os.environ.get(k)]
+    if missing:
+        sys.exit(f"Missing in .env: {', '.join(missing)}")
+    if my_domain(os.environ["SF_DOMAIN"]) in ("login", "test"):
+        sys.exit("SF_DOMAIN must be your My Domain (Setup > My Domain), not 'login', for OAuth.")
+    print(f"OAuth client credentials against {my_domain(os.environ['SF_DOMAIN'])}.salesforce.com ...")
+else:
+    print(f"Legacy password login as {os.environ.get('SF_USERNAME')} ...")
+
 try:
-    sf = Salesforce(
-        username=os.environ["SF_USERNAME"],
-        password=os.environ["SF_PASSWORD"],
-        security_token=os.environ["SF_SECURITY_TOKEN"],
-        domain=domain,
-    )
+    sf = connect()
 except SalesforceAuthenticationFailed as exc:
     print(f"\nFAILED: {exc}\n")
-    print("Most common causes, in order:")
-    print("  1. SF_USERNAME is your login email, not your Salesforce username.")
-    print("     Check: avatar > Settings > Personal Information > Username.")
-    print("  2. The security token is stale. Changing your password invalidates it.")
-    print("     Avatar > Settings > Reset My Security Token, use the NEWEST email.")
-    print("  3. Password typo. Log in at login.salesforce.com with the same values to confirm.")
-    print("  4. Locked out after repeated failures: wait 15 minutes or reset your password.")
-    print("  5. If the error mentions SOAP/API login being disabled, the org blocks this")
-    print("     login method; switch to OAuth (Connected App / External Client App).")
+    if oauth:
+        print("Check, in order:")
+        print("  1. External Client App > Policies: 'Enable Client Credentials Flow' is on")
+        print("     and 'Run As' is set to your user.")
+        print("  2. OAuth scope includes 'Manage user data via APIs (api)'.")
+        print("  3. Client ID/secret copied fully; SF_DOMAIN is your My Domain.")
+        print("  4. New apps can take up to 10 minutes to start working.")
+    else:
+        print("Orgs created in Winter '26+ disable password (SOAP) login by default.")
+        print("Use OAuth instead: see 'Salesforce setup' in the README.")
     sys.exit(1)
+except KeyError as exc:
+    sys.exit(f"Missing in .env: {exc}")
 
 total = sf.query("SELECT COUNT() FROM Lead")["totalSize"]
 print(f"\nOK: connected to {sf.sf_instance}. The org has {total} Lead(s).")
